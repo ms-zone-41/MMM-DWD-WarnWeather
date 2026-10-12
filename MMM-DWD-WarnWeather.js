@@ -57,17 +57,14 @@ Module.register("MMM-DWD-WarnWeather", {
 			return data;
 		}
 
-		// DWD answered, but found no single municipality for the region or cell.
-		// Checked before hideNoWarning, so that a wrong region or cell is not hidden.
+		// DWD answered, but found no single municipality for the region or cell
 		if (!communityName) {
 			data.status = "Ort nicht gefunden";
 			return data;
 		}
 
 		if (this.warnings.length < 1) {
-			if (this.config.hideNoWarning) {
-				data.hideWrapper = true;
-			} else if (this.config.severityThreshold < 2) {
+			if (this.config.severityThreshold < 2) {
 				data.status = this.config.noWarningText;
 			} else {
 				data.status = this.config.noWarningText + this.config.noWarningTextGreater + this.config.severityThreshold;
@@ -105,6 +102,8 @@ Module.register("MMM-DWD-WarnWeather", {
 		this.noWarnings = false;
 		this.warnings = [];
 		this.community = [];
+		this.selfHidden = false;
+		this.domCreated = false;
 		this.icons = {
 			THUNDERSTORM: 'sprite-gewitter',
 			WIND: 'sprite-sturm',
@@ -142,12 +141,53 @@ Module.register("MMM-DWD-WarnWeather", {
 		setTimeout(self.updateWarnings, self.config.interval, self);
 	},
 
+	// No header while hideNoWarning hides the module. This also keeps the header
+	// out of the first frame, before MODULE_DOM_CREATED hides the module.
 	getHeader: function () {
-		if (this.warnings.length < 1 && this.config.hideNoWarning) {
-			if (this.data.header) return "";
-			else return "";
+		if (this.isEmpty()) {
+			return "";
+		}
+		return this.data.header;
+	},
+
+	// With hideNoWarning the module has nothing to show while it loads and while
+	// there is no warning. A location that is not found is shown, so that a wrong
+	// region or cell is not hidden.
+	isEmpty: function () {
+		return this.config.hideNoWarning && (!this.loaded || (!!this.communityName() && this.warnings.length < 1));
+	},
+
+	notificationReceived: function (notification) {
+		// Hide from the start, like the newsfeed with hideLoading. hide() takes
+		// effect on the page only once the module DOM exists.
+		if (notification === "MODULE_DOM_CREATED") {
+			this.domCreated = true;
+			if (this.isEmpty()) {
+				this.selfHidden = true;
+				this.hide(0, function () {}, { lockString: this.identifier });
+			}
+		}
+	},
+
+	// Shows new data. hideNoWarning uses MagicMirror's hide() and show(), so that
+	// the hidden module takes no space. The lockString keeps a hide by another
+	// module in force.
+	showData: function () {
+		var lock = { lockString: this.identifier };
+		if (this.isEmpty()) {
+			if (!this.selfHidden) {
+				// The old content stays while the module fades out. Before
+				// MODULE_DOM_CREATED nothing was shown yet: hide at once.
+				this.selfHidden = true;
+				this.hide(this.domCreated ? 1000 : 0, function () {}, lock);
+			}
+		} else if (this.selfHidden) {
+			// Fill the hidden module without an animation, then fade it in once
+			this.selfHidden = false;
+			this.updateDom(0);
+			this.show(1000, function () {}, lock);
 		} else {
-			return this.data.header;
+			this.updateDom(1000);
 		}
 	},
 
@@ -187,7 +227,7 @@ Module.register("MMM-DWD-WarnWeather", {
 				this.community = payload.community;
 				this.loaded = true;
 				this.noWarnings = false;
-				this.updateDom(1000);
+				this.showData();
 			}
 		}
 	}
