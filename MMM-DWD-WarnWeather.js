@@ -48,16 +48,19 @@ Module.register("MMM-DWD-WarnWeather", {
 			config: this.config,
 			warnings: []
 		};
-		var communityName = null;
-		if (this.community && this.community.properties && this.community.properties.NAME) {
-			communityName = this.community.properties.NAME;
-		}
+		var communityName = this.communityName();
 		data.communityName = communityName;
 		data.showRegionName = this.config.displayRegionName && this.loaded && !!communityName;
-		data.locationNotFound = !this.community || !this.community.properties;
 
 		if (!this.loaded) {
 			data.status = this.config.loadingText;
+			return data;
+		}
+
+		// DWD answered, but found no single municipality for the region or cell.
+		// Checked before hideNoWarning, so that a wrong region or cell is not hidden.
+		if (!communityName) {
+			data.status = "Ort nicht gefunden";
 			return data;
 		}
 
@@ -91,6 +94,10 @@ Module.register("MMM-DWD-WarnWeather", {
 		});
 
 		return data;
+	},
+	// The name of the municipality that DWD found for the region or cell, or null
+	communityName: function () {
+		return this.community && this.community.properties && this.community.properties.NAME || null;
 	},
 	// Define parameters at start
 	start: function () {
@@ -167,15 +174,20 @@ Module.register("MMM-DWD-WarnWeather", {
 		Log.info(notification);
 
 		if (notification === 'WARNINGS_DATA') {
-			if (payload.community.hasOwnProperty('geometry')) {
-				if (payload.region === this.config.region || payload.region === this.config.warnCellID || this.pointInPoly([this.config.lng, this.config.lat], payload.community.geometry.coordinates[0])) {
-					Log.info(payload);
-					this.warnings = payload.warnings;
-					this.community = payload.community;
-					this.loaded = true;
-					this.noWarnings = false;
-					this.updateDom(1000);
-				}
+			// Without geometry DWD found no single municipality for the region or cell.
+			// Such an answer is still accepted for the configured region or cell, so
+			// that 'Ort nicht gefunden' is shown instead of loading forever.
+			var located = payload.community.hasOwnProperty('geometry');
+			var mine = payload.region === this.config.region || payload.region === this.config.warnCellID
+				|| (located && this.pointInPoly([this.config.lng, this.config.lat], payload.community.geometry.coordinates[0]));
+			// No municipality after one was found is a failed lookup: keep the last state
+			if (mine && (located || !this.communityName())) {
+				Log.info(payload);
+				this.warnings = payload.warnings;
+				this.community = payload.community;
+				this.loaded = true;
+				this.noWarnings = false;
+				this.updateDom(1000);
 			}
 		}
 	}
